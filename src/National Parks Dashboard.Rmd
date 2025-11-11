@@ -1,0 +1,305 @@
+---
+title: "United States National Parks"
+output: flexdashboard::flex_dashboard
+runtime: shiny
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(DBI)
+library(RSQLite)
+library(dplyr)
+library(flexdashboard)
+library(shiny)
+library(leaflet)
+library(tidygeocoder)
+```
+
+```{r, include=FALSE}
+conn <- dbConnect(RSQLite::SQLite(), dbname = "parks.db")
+
+# Read in tables as data frames
+activities <- dbReadTable(conn, "activities")
+amenities <- dbReadTable(conn, "amenities")
+park_amenities <- dbReadTable(conn, "park_amenities")
+parks <- dbReadTable(conn, "parks")
+
+# Join park codes and amenity names
+amenities <- left_join(park_amenities, amenities, by = "amenity_id")
+
+# Map state/territory abbreviations to names
+state_dict <- c(
+  # 50 states
+  "AL" = "Alabama",
+  "AK" = "Alaska",
+  "AZ" = "Arizona",
+  "AR" = "Arkansas",
+  "CA" = "California",
+  "CO" = "Colorado",
+  "CT" = "Connecticut",
+  "DC" = "District of Columbia",
+  "DE" = "Delaware",
+  "FL" = "Florida",
+  "GA" = "Georgia",
+  "HI" = "Hawaii",
+  "ID" = "Idaho",
+  "IL" = "Illinois",
+  "IN" = "Indiana",
+  "IA" = "Iowa",
+  "KS" = "Kansas",
+  "KY" = "Kentucky",
+  "LA" = "Louisiana",
+  "ME" = "Maine",
+  "MD" = "Maryland",
+  "MA" = "Massachusetts",
+  "MI" = "Michigan",
+  "MN" = "Minnesota",
+  "MS" = "Mississippi",
+  "MO" = "Missouri",
+  "MT" = "Montana",
+  "NE" = "Nebraska",
+  "NV" = "Nevada",
+  "NH" = "New Hampshire",
+  "NJ" = "New Jersey",
+  "NM" = "New Mexico",
+  "NY" = "New York",
+  "NC" = "North Carolina",
+  "ND" = "North Dakota",
+  "OH" = "Ohio",
+  "OK" = "Oklahoma",
+  "OR" = "Oregon",
+  "PA" = "Pennsylvania",
+  "RI" = "Rhode Island",
+  "SC" = "South Carolina",
+  "SD" = "South Dakota",
+  "TN" = "Tennessee",
+  "TX" = "Texas",
+  "UT" = "Utah",
+  "VT" = "Vermont",
+  "VA" = "Virginia",
+  "WA" = "Washington",
+  "WV" = "West Virginia",
+  "WI" = "Wisconsin",
+  "WY" = "Wyoming",
+
+  # U.S. territories
+  "PR" = "Puerto Rico",
+  "GU" = "Guam",
+  "VI" = "U.S. Virgin Islands",
+  "AS" = "American Samoa",
+  "MP" = "Northern Mariana Islands",
+  
+  # If more than one state is listed, map to state where coordinates reside
+  "AL,AR,GA,IL,KY,MO,NC,OK,TN" = "Tennessee",
+  "AL,MS,TN" = "Mississippi",
+  "AR,OK" = "Arkansas",
+  "AZ,CA" = "California",
+  "AZ,CA,CO,NV,NM,UT" = "Utah",
+  "AZ,NV" = "Arizona",
+  "AZ,UT" = "Arizona",
+  "CA,CO,ID,KS,MO,NE,NV,OR,UT,WY" = "Wyoming",
+  "CA,CO,KS,MO,NE,NV,UT,WY" = "Wyoming",
+  "CA,NV" = "California",
+  "CO,KS,MO,NM,OK" = "Kansas",
+  "CO,UT" = "Colorado",
+  "CT,GA,MA,MD,ME,NC,NH,NJ,NY,PA,TN,VA,VT,WV" = "Pennsylvania",
+  "DC,DE,MD,NY,PA,VA,WV" = "Maryland",
+  "DC,MD,PA,VA" = "Maryland",
+  "DC,MD,VA" = "District of Columbia",
+  "DC,MD,WV" = "Maryland",
+  "DE,PA" = "Delaware",
+  "FL,MS" = "Florida",
+  "GA,TN" = "Georgia",
+  "IA,ID,IL,IN,KS,KY,MO,MT,NE,ND,OH,OR,PA,SD,WA,WV" = "Nebraska",
+  "ID,KS,MO,NE,OR,WA,WY" = "Wyoming",
+  "ID,MT,OR,WA" = "Idaho",
+  "ID,MT,WY" = "Wyoming",
+  "ID,WA" = "Idaho",
+  "IL,IA,NE,UT,WY" = "Nebraska",
+  "IL,MS" = "Mississippi",
+  "KY,TN" = "Tennessee",
+  "KY,TN,VA" = "Virginia",
+  "MA,CT" = "Massachusetts",
+  "MA,RI,CT,NY,NJ,PA,DE,MD,VA,DC" = "Pennsylvania",
+  "MD,VA" = "Maryland",
+  "MD,VA,DC" = "Maryland",
+  "MI,MN,ND,NY,OH,PA,VT,WI" = "Wisconsin",
+  "MO,AR,OK,TX,NM,AZ,CA" = "New Mexico",
+  "MS,LA" = "Mississippi",
+  "MT,ND" = "North Dakota",
+  "MT,WY" = "Montana",
+  "NC,SC,TN,VA" = "South Carolina",
+  "NC,TN" = "Tennessee",
+  "NC,VA" = "North Carolina",
+  "NJ,NY" = "New York",
+  "NJ,PA" = "Pennsylvania",
+  "NM,TX" = "New Mexico",
+  "NM,WA,TN" = "New Mexico",
+  "NY,NJ" = "New York",
+  "NY,PA" = "New York",
+  "OR,WA" = "Washington",
+  "PA,NJ" = "Pennsylvania",
+  "RI,MA" = "Rhode Island",
+  "SD,NE" = "Nebraska",
+  "TN,MS" = "Tennessee",
+  "TX,LA" = "Texas",
+  "VA,MD,DE,DC,PA,NY" = "Maryland",
+  "WA,OR,ID,MT" = "Washington",
+  "WI,MN" = "Wisconsin",
+  "WV,VA,MD" = "West Virginia"
+)
+
+parks$states <- state_dict[parks$states]
+
+# Exception: `states` is "DC,MD,VA" but coordinates are in Virginia
+parks[parks$parkCode == "gwmp", ] <- "Virginia"
+
+# Exception: `states` is "OR,WA" but coordinates are in Oregon
+parks[parks$parkCode == "lewi", ] <- "Oregon"
+```
+
+```{r ui, echo=FALSE}
+css_code <- HTML("
+  .leaflet-popup-content-wrapper {
+    max-height: 200px;
+    overflow-y: auto;
+  }
+  .leaflet-popup-content {
+    width: 300px !important;
+  }
+")
+
+ui <- fluidPage(
+  titlePanel("Interactive Map"),
+  sidebarLayout(
+    sidebarPanel(
+      selectInput(
+        inputId = "mapFilter",
+        label = "States and U.S. Territories",
+        choices = sort(unique(parks$states)),
+        multiple = TRUE,
+        selected = NULL
+      ),
+      
+      radioButtons(
+        inputId = "activityLogic",
+        label = "Show Activities:",
+        choices = c("AND" = "and", "OR" = "or"),
+        selected = "or",
+        inline = TRUE
+      ),
+      
+      selectInput(
+        inputId = "activityFilter",
+        label = "Activities",
+        choices = sort(unique(activities$activity_name)),
+        multiple = TRUE,
+        selected = NULL
+      ),
+      
+      radioButtons(
+        inputId = "amenityLogic",
+        label = "Show Amenities:",
+        choices = c("AND" = "and", "OR" = "or"),
+        selected = "or",
+        inline = TRUE
+      ),
+      
+      selectInput(
+        inputId = "amenityFilter",
+        label = "Amenities",
+        choices = sort(unique(amenities$amenity_name)),
+        multiple = TRUE,
+        selected = NULL
+      )
+    ),
+    
+    mainPanel(
+      tags$head(tags$style(css_code)),
+      leafletOutput("myMap")
+    )
+  )
+)
+```
+
+```{r server, echo=FALSE}
+server <- function(input, output, session) {
+  filtered_parks <- reactive({
+    if (!is.null(input$mapFilter) && length(input$mapFilter) > 0) {
+      parks <- parks[parks$states %in% input$mapFilter, ]
+    }
+    
+    if (!is.null(input$activityFilter) && length(input$activityFilter) > 0) {
+      if (input$activityLogic == "or") {
+        activities <- unique(activities$park_id[activities$activity_name %in% input$activityFilter])
+        
+      } else if (input$activityLogic == "and") {
+        activities <- activities %>%
+          dplyr::filter(activity_name %in% input$activityFilter) %>%
+          dplyr::group_by(park_id) %>%
+          dplyr::summarise(n = dplyr::n_distinct(activity_name)) %>%
+          dplyr::filter(n == length(input$activityFilter)) %>%
+          dplyr::pull(park_id)
+      }
+      
+      parks <- parks[parks$id %in% activities, ]
+    }
+    
+    if (!is.null(input$amenityFilter) && length(input$amenityFilter) > 0) {
+      if (input$amenityLogic == "or") {
+        amenities <- unique(amenities$parkCode[amenities$amenity_name %in% input$amenityFilter])
+        
+      } else if (input$activityLogic == "and") {
+        amenities <- amenities %>%
+          dplyr::filter(amenity_name %in% input$amenityFilter) %>%
+          dplyr::group_by(parkCode) %>%
+          dplyr::summarise(n = dplyr::n_distinct(amenity_name)) %>%
+          dplyr::filter(n == length(input$amenityFilter)) %>%
+          dplyr::pull(parkCode)
+      }
+      
+      parks <- parks[parks$parkCode %in% amenities, ]
+    }
+    
+    parks
+  })
+
+  output$myMap <- renderLeaflet({
+    activities <- activities %>%
+      group_by(park_id) %>%
+      summarise(
+        activity_list = paste(sort(unique(activity_name)), collapse = ", ")
+      )
+    
+    amenities <- amenities %>%
+      group_by(parkCode) %>%
+      summarise(
+        amenity_list = paste(sort(unique(amenity_name)), collapse = ", ")
+      )
+    
+    filtered_parks <- filtered_parks() %>%
+      left_join(activities, by = c("id" = "park_id"))
+    
+    filtered_parks <- filtered_parks %>%
+      left_join(amenities, by = "parkCode")
+
+    leaflet() %>%
+      addTiles() %>%
+      addMarkers(
+        data = filtered_parks(),
+        lng = as.numeric(filtered_parks()$longitude),
+        lat = as.numeric(filtered_parks()$latitude),
+        popup = paste(
+          "<b>", filtered_parks$fullName, "</b><br><br>",
+          "<b>Description:</b>", filtered_parks$description, "<br><br>",
+          "<b>Activities:</b>", filtered_parks$activity_list, "<br><br>",
+          "<b>Amenities:</b>", filtered_parks$amenity_list
+        )
+      )
+  })
+}
+```
+
+```{r app, echo=FALSE}
+shinyApp(ui, server)
+```
