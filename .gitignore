@@ -3,3 +3,4 @@
 src/data
 src/logs
 .env
+app/.Renviron
