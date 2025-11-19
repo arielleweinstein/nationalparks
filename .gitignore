@@ -1,0 +1,6 @@
+.idea
+.DS_Store
+src/data
+src/logs
+.env
+app/.Renviron
