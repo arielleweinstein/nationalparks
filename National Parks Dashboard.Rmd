@@ -1,0 +1,460 @@
+---
+title: "United States National Parks"
+output: flexdashboard::flex_dashboard
+runtime: shiny
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(DBI)
+library(RSQLite)
+library(dplyr)
+library(flexdashboard)
+library(shiny)
+library(leaflet)
+library(tidygeocoder)
+library(ggplot2)
+library(httr)
+library(jsonlite)
+```
+
+```{r, include=FALSE}
+conn <- dbConnect(RSQLite::SQLite(), dbname = "parks.db")
+
+# Read tables
+activity_lookup <- dbReadTable(conn, "activity_lookup")
+park_activities <- dbReadTable(conn, "park_activities")
+amenities <- dbReadTable(conn, "amenities")
+park_amenities <- dbReadTable(conn, "park_amenities")
+parks <- dbReadTable(conn, "parks")
+
+# Merge activity tables
+activities <- left_join(park_activities, activity_lookup, by = "activity_id")
+
+# Join amenities with names
+amenities <- left_join(park_amenities, amenities, by = "amenity_id")
+
+
+# Map state/territory abbreviations to names
+state_dict <- c(
+  # 50 states
+  "AL" = "Alabama",
+  "AK" = "Alaska",
+  "AZ" = "Arizona",
+  "AR" = "Arkansas",
+  "CA" = "California",
+  "CO" = "Colorado",
+  "CT" = "Connecticut",
+  "DC" = "District of Columbia",
+  "DE" = "Delaware",
+  "FL" = "Florida",
+  "GA" = "Georgia",
+  "HI" = "Hawaii",
+  "ID" = "Idaho",
+  "IL" = "Illinois",
+  "IN" = "Indiana",
+  "IA" = "Iowa",
+  "KS" = "Kansas",
+  "KY" = "Kentucky",
+  "LA" = "Louisiana",
+  "ME" = "Maine",
+  "MD" = "Maryland",
+  "MA" = "Massachusetts",
+  "MI" = "Michigan",
+  "MN" = "Minnesota",
+  "MS" = "Mississippi",
+  "MO" = "Missouri",
+  "MT" = "Montana",
+  "NE" = "Nebraska",
+  "NV" = "Nevada",
+  "NH" = "New Hampshire",
+  "NJ" = "New Jersey",
+  "NM" = "New Mexico",
+  "NY" = "New York",
+  "NC" = "North Carolina",
+  "ND" = "North Dakota",
+  "OH" = "Ohio",
+  "OK" = "Oklahoma",
+  "OR" = "Oregon",
+  "PA" = "Pennsylvania",
+  "RI" = "Rhode Island",
+  "SC" = "South Carolina",
+  "SD" = "South Dakota",
+  "TN" = "Tennessee",
+  "TX" = "Texas",
+  "UT" = "Utah",
+  "VT" = "Vermont",
+  "VA" = "Virginia",
+  "WA" = "Washington",
+  "WV" = "West Virginia",
+  "WI" = "Wisconsin",
+  "WY" = "Wyoming",
+
+  # U.S. territories
+  "PR" = "Puerto Rico",
+  "GU" = "Guam",
+  "VI" = "U.S. Virgin Islands",
+  "AS" = "American Samoa",
+  "MP" = "Northern Mariana Islands",
+  
+  # If more than one state is listed, map to state where coordinates reside
+  "AL,AR,GA,IL,KY,MO,NC,OK,TN" = "Tennessee",
+  "AL,MS,TN" = "Mississippi",
+  "AR,OK" = "Arkansas",
+  "AZ,CA" = "California",
+  "AZ,CA,CO,NV,NM,UT" = "Utah",
+  "AZ,NV" = "Arizona",
+  "AZ,UT" = "Arizona",
+  "CA,CO,ID,KS,MO,NE,NV,OR,UT,WY" = "Wyoming",
+  "CA,CO,KS,MO,NE,NV,UT,WY" = "Wyoming",
+  "CA,NV" = "California",
+  "CO,KS,MO,NM,OK" = "Kansas",
+  "CO,UT" = "Colorado",
+  "CT,GA,MA,MD,ME,NC,NH,NJ,NY,PA,TN,VA,VT,WV" = "Pennsylvania",
+  "DC,DE,MD,NY,PA,VA,WV" = "Maryland",
+  "DC,MD,PA,VA" = "Maryland",
+  "DC,MD,VA" = "District of Columbia",
+  "DC,MD,WV" = "Maryland",
+  "DE,PA" = "Delaware",
+  "FL,MS" = "Florida",
+  "GA,TN" = "Georgia",
+  "IA,ID,IL,IN,KS,KY,MO,MT,NE,ND,OH,OR,PA,SD,WA,WV" = "Nebraska",
+  "ID,KS,MO,NE,OR,WA,WY" = "Wyoming",
+  "ID,MT,OR,WA" = "Idaho",
+  "ID,MT,WY" = "Wyoming",
+  "ID,WA" = "Idaho",
+  "IL,IA,NE,UT,WY" = "Nebraska",
+  "IL,MS" = "Mississippi",
+  "KY,TN" = "Tennessee",
+  "KY,TN,VA" = "Virginia",
+  "MA,CT" = "Massachusetts",
+  "MA,RI,CT,NY,NJ,PA,DE,MD,VA,DC" = "Pennsylvania",
+  "MD,VA" = "Maryland",
+  "MD,VA,DC" = "Maryland",
+  "MI,MN,ND,NY,OH,PA,VT,WI" = "Wisconsin",
+  "MO,AR,OK,TX,NM,AZ,CA" = "New Mexico",
+  "MS,LA" = "Mississippi",
+  "MT,ND" = "North Dakota",
+  "MT,WY" = "Montana",
+  "NC,SC,TN,VA" = "South Carolina",
+  "NC,TN" = "Tennessee",
+  "NC,VA" = "North Carolina",
+  "NJ,NY" = "New York",
+  "NJ,PA" = "Pennsylvania",
+  "NM,TX" = "New Mexico",
+  "NM,WA,TN" = "New Mexico",
+  "NY,NJ" = "New York",
+  "NY,PA" = "New York",
+  "OR,WA" = "Washington",
+  "PA,NJ" = "Pennsylvania",
+  "RI,MA" = "Rhode Island",
+  "SD,NE" = "Nebraska",
+  "TN,MS" = "Tennessee",
+  "TX,LA" = "Texas",
+  "VA,MD,DE,DC,PA,NY" = "Maryland",
+  "WA,OR,ID,MT" = "Washington",
+  "WI,MN" = "Wisconsin",
+  "WV,VA,MD" = "West Virginia"
+)
+
+parks$states <- state_dict[parks$states]
+
+# Exception: `states` is "DC,MD,VA" but coordinates are in Virginia
+parks[parks$parkCode == "gwmp", ] <- "Virginia"
+
+# Exception: `states` is "OR,WA" but coordinates are in Oregon
+parks[parks$parkCode == "lewi", ] <- "Oregon"
+```
+
+```{r ui, echo=FALSE}
+css_code <- HTML("
+  .leaflet-popup-content-wrapper {
+    max-height: 200px;
+    overflow-y: auto;
+  }
+  .leaflet-popup-content {
+    width: 300px !important;
+  }
+")
+
+ui <- fluidPage(
+  titlePanel("Interactive Map"),
+  sidebarLayout(
+    sidebarPanel(
+      width = 2,
+      style = "width:220px; margin-top: 0; padding-top: 0; padding-right:5px; 
+               background-color:#f9f9f9; border-radius:8px; 
+               box-shadow:0px 2px 4px rgba(0,0,0,0.05);",
+      selectInput(
+        inputId = "mapFilter",
+        label = "States and U.S. Territories",
+        choices = sort(unique(parks$states)),
+        multiple = TRUE,
+        selected = NULL
+      ),
+      
+      radioButtons(
+        inputId = "activityLogic",
+        label = "Show Activities:",
+        choices = c("AND" = "and", "OR" = "or"),
+        selected = "or",
+        inline = TRUE
+      ),
+      
+      selectInput(
+        inputId = "activityFilter",
+        label = "Activities",
+        choices = sort(unique(activities$activity_name)),
+        multiple = TRUE,
+        selected = NULL
+      ),
+      
+      radioButtons(
+        inputId = "amenityLogic",
+        label = "Show Amenities:",
+        choices = c("AND" = "and", "OR" = "or"),
+        selected = "or",
+        inline = TRUE
+      ),
+      
+      selectInput(
+        inputId = "amenityFilter",
+        label = "Amenities",
+        choices = sort(unique(amenities$amenity_name)),
+        multiple = TRUE,
+        selected = NULL
+      )
+    ),
+    
+    mainPanel(
+      tags$head(tags$style(css_code)),
+      leafletOutput("myMap", height = "500px"),
+      br(),
+      fluidRow(
+        column(
+          width = 4,
+          div(
+            style = "background-color:#f8f9fa; border-radius:10px; padding:15px; 
+                     box-shadow:0px 2px 4px rgba(0,0,0,0.1); min-height:340px;",
+            h3("AI-Generated Summary", style = "color:#333; font-weight:bold; 
+                                                  font-size:20px; margin-bottom:10px;"),
+            tags$div(
+              style = "background:white; padding:12px; border-radius:8px; 
+                       height:280px; overflow-y:auto; font-size:15px; 
+                       line-height:1.5; color:#222; border:1px solid #ddd;",
+              textOutput("llmSummary")
+            )
+          )
+        ),
+        column(
+          width = 4,
+          div(
+            style = "background-color:#f8f9fa; border-radius:10px; padding:15px; 
+                     box-shadow:0px 2px 4px rgba(0,0,0,0.1);",
+            h3("Top 10 Activities", style = "color:#333; font-weight:bold; 
+                                                font-size:20px; margin-bottom:10px;"),
+            plotOutput("activityPlot", height = "300px")
+          )
+        ),
+        column(
+          width = 4,
+          div(
+            style = "background-color:#f8f9fa; border-radius:10px; padding:15px; 
+                     box-shadow:0px 2px 4px rgba(0,0,0,0.1);",
+            h3("Top 10 Amenities", style = "color:#333; font-weight:bold; 
+                                               font-size:20px; margin-bottom:10px;"),
+            plotOutput("amenityPlot", height = "300px")
+          )
+        )
+      )
+    )
+  )
+)
+```
+
+```{r server, echo=FALSE}
+Sys.setenv(OPENROUTER_API_KEY = "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")
+generate_llm_explanation <- function(states, activities, amenities) {
+  state_text <- ifelse(length(states) == 0,
+                       "the entire United States",
+                       paste(states, collapse = ", "))
+  prompt <- paste0(
+    "You are an expert park analyst.\n",
+    "Summarize the key characteristics of these parks activities and amenities.\n",
+    "Region: ", state_text, ".\n",
+    "Top activities: ", paste(activities, collapse = ", "), ".\n",
+    "Top amenities: ", paste(amenities, collapse = ", "), ".\n",
+    "Write a short, human-readable explanation in 2–3 sentences, including the information of state. Note that use parks instead of park and write your idea about the state user selected."
+  )
+
+  res <- POST(
+    "https://openrouter.ai/api/v1/chat/completions",
+    add_headers(
+      Authorization = paste("Bearer", Sys.getenv("OPENROUTER_API_KEY")),
+      "Content-Type" = "application/json"
+    ),
+    body = toJSON(list(
+      model = "qwen/qwen3-235b-a22b:free",
+      messages = list(list(
+        role = "user",
+        content = prompt
+      ))
+    ), auto_unbox = TRUE)
+  )
+
+  txt <- content(res, "text", encoding = "UTF-8")
+  result <- fromJSON(txt, simplifyVector = FALSE)
+
+  result$choices[[1]]$message$content
+}
+
+
+
+
+
+server <- function(input, output, session) {
+  
+  filtered_parks <- reactive({
+    parks_filtered <- parks
+    
+
+    if (!is.null(input$mapFilter) && length(input$mapFilter) > 0) {
+      parks_filtered <- parks_filtered[parks_filtered$states %in% input$mapFilter, ]
+    }
+    
+    if (!is.null(input$activityFilter) && length(input$activityFilter) > 0) {
+      if (input$activityLogic == "or") {
+        act_ids <- unique(activities$park_id[activities$activity_name %in% input$activityFilter])
+      } else {
+        act_ids <- activities %>%
+          filter(activity_name %in% input$activityFilter) %>%
+          group_by(park_id) %>%
+          summarise(n = n_distinct(activity_name)) %>%
+          filter(n == length(input$activityFilter)) %>%
+          pull(park_id)
+      }
+      parks_filtered <- parks_filtered[parks_filtered$id %in% act_ids, ]
+    }
+    
+    if (!is.null(input$amenityFilter) && length(input$amenityFilter) > 0) {
+      if (input$amenityLogic == "or") {
+        ame_codes <- unique(amenities$parkCode[amenities$amenity_name %in% input$amenityFilter])
+      } else if (input$amenityLogic == "and") {
+        ame_codes <- amenities %>%
+          filter(amenity_name %in% input$amenityFilter) %>%
+          group_by(parkCode) %>%
+          summarise(n = n_distinct(amenity_name)) %>%
+          filter(n == length(input$amenityFilter)) %>%
+          pull(parkCode)
+      }
+      parks_filtered <- parks_filtered[parks_filtered$parkCode %in% ame_codes, ]
+    }
+    
+    parks_filtered
+  })
+  
+  output$myMap <- renderLeaflet({
+    activities_summary <- activities %>%
+      group_by(park_id) %>%
+      summarise(activity_list = paste(sort(unique(activity_name)), collapse = ", "))
+    
+    amenities_summary <- amenities %>%
+      group_by(parkCode) %>%
+      summarise(amenity_list = paste(sort(unique(amenity_name)), collapse = ", "))
+    
+    filtered_data <- filtered_parks() %>%
+      left_join(activities_summary, by = c("id" = "park_id")) %>%
+      left_join(amenities_summary, by = "parkCode")
+    
+    leaflet(filtered_data) %>%
+      addTiles() %>%
+      addMarkers(
+        lng = as.numeric(filtered_data$longitude),
+        lat = as.numeric(filtered_data$latitude),
+        popup = paste(
+          "<b>", filtered_data$fullName, "</b><br><br>",
+          "<b>Description:</b>", filtered_data$description, "<br><br>",
+          "<b>Activities:</b>", filtered_data$activity_list, "<br><br>",
+          "<b>Amenities:</b>", filtered_data$amenity_list
+        )
+      )
+  })
+  
+
+  output$activityPlot <- renderPlot({
+    selected_parks <- filtered_parks()
+    
+    park_acts <- activities %>%
+      filter(park_id %in% selected_parks$id)
+    
+    if (nrow(park_acts) == 0) return(NULL)
+    
+    act_counts <- park_acts %>%
+      count(activity_name, sort = TRUE) %>%
+      head(10)
+    
+    ggplot(act_counts, aes(x = reorder(activity_name, n), y = n)) +
+      geom_col(fill = "#1f77b4") +
+      coord_flip() +
+      labs(
+        x = NULL, y = "Number of Parks",
+        title = "Top 10 Activities"
+      ) +
+      theme_minimal(base_size = 13)
+  })
+  
+
+  output$amenityPlot <- renderPlot({
+    selected_parks <- filtered_parks()
+    
+    park_ames <- amenities %>%
+      filter(parkCode %in% selected_parks$parkCode)
+    
+    if (nrow(park_ames) == 0) return(NULL)
+    
+    ame_counts <- park_ames %>%
+      count(amenity_name, sort = TRUE) %>%
+      head(10)
+    
+    ggplot(ame_counts, aes(x = reorder(amenity_name, n), y = n)) +
+      geom_col(fill = "#2ca02c") +
+      coord_flip() +
+      labs(
+        x = NULL, y = "Number of Parks",
+        title = "Top 10 Amenities"
+      ) +
+      theme_minimal(base_size = 13)
+  })
+  
+  output$llmSummary <- renderText({
+  selected_parks <- filtered_parks()
+  selected_states <- unique(selected_parks$states)
+  
+  act_counts <- activities %>%
+    filter(park_id %in% selected_parks$id) %>%
+    count(activity_name, sort = TRUE) %>%
+    head(10)
+  
+  ame_counts <- amenities %>%
+    filter(parkCode %in% selected_parks$parkCode) %>%
+    count(amenity_name, sort = TRUE) %>%
+    head(10)
+  
+  explanation <- generate_llm_explanation(
+    selected_states,
+    act_counts$activity_name,
+    ame_counts$amenity_name
+  )
+  
+  explanation
+})
+
+}
+```
+
+```{r app, echo=FALSE}
+if (interactive()) {
+  shinyApp(ui, server)
+}
+```
+

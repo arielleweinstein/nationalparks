@@ -1,0 +1,10 @@
+name: national-parks
+title:
+username: nationalparksguide
+account: nationalparksguide
+server: shinyapps.io
+hostUrl: https://api.shinyapps.io/v1
+appId: 16093434
+bundleId: 11192121
+url: https://nationalparksguide.shinyapps.io/national-parks/
+version: 1
