@@ -453,5 +453,8 @@ server <- function(input, output, session) {
 ```
 
 ```{r app, echo=FALSE}
-shinyApp(ui, server)
+if (interactive()) {
+  shinyApp(ui, server)
+}
 ```
+

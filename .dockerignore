@@ -1,0 +1,22 @@
+# Ignore local logs and data (the container builds its own)
+logs/
+data/
+
+# Ignore generated databases
+*.db
+*.sqlite
+
+# Python caches
+__pycache__/
+*.pyc
+
+# RStudio noise
+.Rproj.user/
+.Rhistory
+.RData
+
+# MacOS noise
+.DS_Store
+
+# Temporary files
+*.tmp
