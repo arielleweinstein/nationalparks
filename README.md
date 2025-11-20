@@ -85,6 +85,8 @@ docker build -t nationalparks-db .
 
 Run the ingestion process:
 
+Note: The ingestion container needs a local `data/` directory where it can write the generated parks.db file. Create it if it doesn't exist using `mkdir data`.
+
 ```bash
 docker run --rm \
   -e NPS_API_KEY="your_api_key_here" \
