@@ -76,6 +76,7 @@ python read_api.py
 
 If everything completes successfully, a new parks.db file will appear in the project root. This database powers the Shiny dashboard.
 
+
 ## Database Structure
 
 All of the park data is stored in a local SQLite database called `parks.db`. The schema is small and easy to work with. Parks, activities, and amenities each get their own table, and two linking tables handle the many to many relationships.
