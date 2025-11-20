@@ -57,9 +57,11 @@ If this key isn’t set, the dashboard still runs normally, just without the AI 
 
 The pipeline starts with a single Python script that pulls the latest park and amenity data from the National Park Service API and loads everything into a SQLite database. This keeps the dashboard fast and removes the need for repeated API calls.
 
-The script is here:
+Run the script after setting your environment variables:
 
-:contentReference[oaicite:0]{index=0}
+```bash
+python read_api.py
+```
 
 When you run it, it does four things:
 
@@ -68,14 +70,27 @@ When you run it, it does four things:
 3. Logs each fetch in the `logs/` folder  
 4. Builds or updates the `parks.db` database and fills all tables with fresh data  
 
-Run the script after setting your environment variables:
-
-```bash
-python read_api.py
-```
-
 If everything completes successfully, a new parks.db file will appear in the project root. This database powers the Shiny dashboard.
 
+## Data Ingestion with Docker
+
+A Dockerfile is included to automate building the `parks.db` database.
+When run, the container installs dependencies, calls the NPS API through `src/read_api.py`, and writes the generated SQLite database into the `data/` folder.
+
+Build the image:
+
+```bash
+docker build -t nationalparks-db .
+```
+
+Run the ingestion process:
+
+```bash
+docker run --rm \
+  -e NPS_API_KEY="your_api_key_here" \
+  -v $(pwd)/data:/app/data \
+  nationalparks-db
+```
 
 ## Database Structure
 
